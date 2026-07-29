@@ -2,20 +2,34 @@
 
 **Which local model should you actually run for agentic work — and what does it cost you?**
 
-Public leaderboards benchmark frontier models on academic tasks. This repo asks a narrower,
-more practical question: on a laptop, with open weights and no API keys, which model reliably
-**calls the right tool**, **fills a schema**, **stays grounded in retrieved context**, and
-**answers in the language you asked in** — and how many tokens per second do you pay for it?
+On a laptop, with open weights and no API keys: which model reliably **calls the right tool**,
+**fills a schema**, **stays grounded in retrieved context**, and **answers in the language you
+asked in** — and how many tokens per second do you pay for it?
 
 Two halves:
 
 - **Patterns** — small runnable examples of *how* to build each piece (agent loop, schema-guided
   reasoning, retrieval, serving). Each one carries the failure that motivated it.
-- **Harness** — a reproducible benchmark that runs those same tasks across models and runtimes
-  and produces comparison tables.
+- **Harness** — a benchmark that runs those same tasks across models and runtimes and produces
+  comparison tables.
 
-Everything runs locally (Ollama / LM Studio). One model is then taken to a rented GPU with vLLM,
-to compare laptop economics against server economics on the same tasks.
+**State today:** three patterns and one suite (`tool-calling`, 6 mirrored EN/RU pairs) run
+end-to-end on Ollama; results below. The other suites are not written yet, and the LM Studio /
+GPU runtimes have adapters but no recorded runs — every table marks what is real with ✅ and
+what is not with 🚧.
+
+### Prior art, and what is different here
+
+Tool calling already has serious benchmarks — [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html)
+covers it far more thoroughly, [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)
+is the standard for academic tasks, [RAGAS](https://docs.ragas.io) owns RAG metrics (and is used
+here as a library, not competed with). This repo does not try to out-benchmark them. It occupies
+a narrower slot they do not cover:
+
+- **Consumer hardware, not a cluster** — the question is what a 36 GB laptop can actually run.
+- **Capability and cost in the same table** — a score is only useful next to tok/s and memory.
+- **Mirrored EN/RU cases** — the English score of a model says little about deploying it where
+  the users write Russian.
 
 ## What's inside
 
@@ -59,21 +73,21 @@ The harness is a four-stage pipeline — cases in, reports out — with the runt
 one adapter interface, so adding a model or a whole runtime never touches the scorers:
 
 ```
- suites/*.yaml                 harness/run.py                harness/adapters/
- ┌──────────────┐   cases    ┌────────────────┐   prompts   ┌──────────────────┐
- │ tool-calling │──────────► │  runner        │───────────► │ ollama           │──► local
- │ schema-adh.  │            │  matrix:       │             │ lmstudio (MLX)   │──► local
- │ rag-grounding│            │  model × suite │ ◄───────────│ vllm (GPU)       │──► rented
- │ ru-quality   │            └───────┬────────┘  responses  └──────────────────┘
- │ speed        │                    │            + latency, tokens
- └──────────────┘                    ▼
-                          runs/*.jsonl  (raw: prompt, response, timings — never deleted)
-                                       │
-                                       ▼
-                          harness/scorers/  (deterministic · RAGAS · judge)
-                                       │
-                                       ▼
-                          reports/*.md  →  the Results tables below
+ suites/*/cases.yaml           harness/run.py              harness/adapters.py
+ ┌───────────────┐   cases   ┌────────────────┐  prompts  ┌────────────────────┐
+ │ tool-calling ✅│─────────► │  runner        │─────────► │ ollama          ✅ │──► local
+ │ schema-adh.  🚧│           │  matrix:       │           │ lmstudio (MLX)  🚧 │──► local
+ │ rag-grounding🚧│           │  model × case  │ ◄─────────│ vllm (GPU)      🚧 │──► rented
+ │ speed        🚧│           └───────┬────────┘ responses └────────────────────┘
+ └───────────────┘                   │           + latency, tokens
+                                     ▼
+                        runs/*.jsonl  (raw: response, timings — never rewritten)
+                                     │
+                                     ▼
+                        harness/score.py  (deterministic now · RAGAS · judge later)
+                                     │
+                                     ▼
+                        reports/*.md  →  the Results tables below
 ```
 
 Three rules the design follows:
@@ -90,14 +104,19 @@ Three rules the design follows:
 Candidates for the first run — one per role, deliberately small so the comparison stays readable.
 Exact tags should be verified against the runtime's registry before pulling.
 
-| Role in the comparison | Candidate | Why it is in |
-|------------------------|-----------|--------------|
-| Small baseline | `llama3.2:3b` | Establishes the floor: what you lose by going tiny |
-| Workhorse (reference) | `qwen2.5:7b` | The model every pattern here was developed against |
-| Workhorse challenger | a current-generation 8–14B (Qwen3 / Gemma / Mistral class) | Does one generation of progress beat one size class? |
-| Tool-calling specialist | a function-calling fine-tune (Hermes / Granite / Command-R class) | Does specialisation beat general capability on `tool-calling`? |
-| MoE, large-but-fast | `qwen3-vl:30b` (30B total, ~3B active) | The local-serving sweet spot: 30B memory, near-3B speed |
-| GPU tier | `Qwen2.5-7B-Instruct-AWQ` on vLLM | Same weights class, server economics — batching and concurrency |
+Tool support is a property of the **model + runtime pair**, not of the model card — so every
+candidate earns its row by an actual harness run, not by reputation. Two lessons from doing
+exactly that (see Findings): a vision-language MoE turned out to be a flawless tool caller,
+while Gemma is rejected by Ollama outright (`does not support tools`, HTTP 400).
+
+| Role in the comparison | Candidate | Tools in Ollama | Why it is in |
+|------------------------|-----------|-----------------|--------------|
+| Small baseline | `llama3.2:3b` | ✅ verified | Establishes the floor: what you lose by going tiny |
+| Workhorse (reference) | `qwen2.5:7b` | ✅ verified | The model every pattern here was developed against |
+| MoE, large-but-fast | `qwen3-vl:30b` (30B total, ~3B active) | ✅ verified, 12/12 | The local-serving sweet spot: 30B memory footprint, near-3B decode speed — and, empirically, a flawless tool caller despite being a VL variant |
+| Workhorse challenger | a current-generation 8–14B (Qwen3 / Gemma / Mistral class) | to verify per tag | Does one generation of progress beat one size class? Gemma tags without tool support still compete in `schema-adherence` / `rag-grounding` / `speed` |
+| Tool-calling specialist | a function-calling fine-tune (Hermes / Granite / Command-R class) | to verify per tag | Does specialisation beat general capability on `tool-calling`? |
+| GPU tier | `Qwen2.5-7B-Instruct-AWQ` on vLLM | expected ✅ | Same weights class, server economics — batching and concurrency |
 
 Embeddings for `rag-grounding`: `nomic-embed-text` (768-dim, English) and `bge-m3` (multilingual,
 used for the Russian half) — embedder choice is itself a variable in that suite.
@@ -106,22 +125,22 @@ used for the Russian half) — embedder choice is itself a variable in that suit
 
 | Corpus | Used by | Licence / provenance | Where it lives |
 |--------|---------|----------------------|----------------|
-| Synthetic microservice incident domain (services, dependencies, tickets) | `tool-calling`, `schema-adherence` | Written for this repo, MIT | In-repo, inline in the suites |
-| Documentation corpus (vLLM / LangGraph / RAGAS public docs) | `rag-grounding` | Upstream licences — **fetched by a script, not vendored here** | `data/docs/` (git-ignored) |
-| Russian translations of the same cases | `ru-quality` | Written for this repo, MIT | In-repo |
-| Your own documents | `rag-grounding` | Yours | `data/local/` (git-ignored by design) |
+| Synthetic microservice incident domain (services, dependencies, tickets), with every case written in both English and Russian | `tool-calling` ✅, `schema-adherence` 🚧 | Written for this repo, MIT | In-repo: [`suites/tool_calling/cases.yaml`](suites/tool_calling/cases.yaml) |
+| Documentation corpus (vLLM / LangGraph / RAGAS public docs) | `rag-grounding` 🚧 | Upstream licences — to be **fetched by a script, never vendored here** | `data/docs/` (git-ignored) |
+| Your own documents | `rag-grounding` 🚧 | Yours | `data/local/` (git-ignored by design) |
 
-Golden sets live next to the suites as YAML: question, expected sources, expected facts, and —
-importantly — a set of **unanswerable** questions, because "I don't know" is a scored behaviour.
+When `rag-grounding` lands, its golden set will sit next to the suite as YAML — question,
+expected sources, expected facts, and a block of deliberately **unanswerable** questions,
+because "I don't know" is a scored behaviour, not a missing answer.
 
 ## Reproduce
 
 Prerequisites: [Ollama](https://ollama.com), Python ≥ 3.11, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:7b && ollama pull llama3.2:3b   # the two models compared below
 git clone https://github.com/aleksandryessin/llm-dojo && cd llm-dojo
-uv sync
+uv sync                                             # exact versions come from uv.lock
 ```
 
 Run a pattern (works today):
@@ -139,9 +158,10 @@ uv run -m harness.run --suite tool-calling --models qwen2.5:7b,llama3.2:3b   # r
 uv run -m harness.score                                                       # scores newest -> reports/
 ```
 
-The runtime is swappable without touching anything else — point the same suite at LM Studio
+The runtime is a flag, not a rewrite: the same suite can be pointed at LM Studio
 (`--runtime lmstudio`, port 1234) or at a rented GPU box (`--runtime vllm`, `VLLM_BASE_URL=…`).
-Same cases, same scorer, comparable numbers.
+Both adapters exist; neither has been exercised yet — those rows in the Cost table are empty
+for that reason, not by oversight.
 
 ## Results
 
@@ -154,8 +174,9 @@ reproducible with the commands above. Tables are filled in as suites land.
 |-------|-------------------|-------------------|---------|------------------|---------------|
 | `llama3.2:3b` | 0.83 | 0.83 | +0.00 | – | – |
 | `qwen2.5:7b` | 1.00 | 1.00 | +0.00 | – | – |
-| _challenger_ | – | – | – | – | – |
-| `qwen3-vl:30b` | – | – | – | – | – |
+| `qwen3-vl:30b` | 1.00 | 1.00 | +0.00 | – | – |
+| `gemma3:1b` | ✗ no tool support in Ollama (HTTP 400) | ✗ | n/a | – | – |
+| _challenger (8–14B, tbd)_ | – | – | – | – | – |
 
 Full per-case breakdown: [reports/tool-calling.md](reports/tool-calling.md).
 
@@ -178,18 +199,26 @@ Full per-case breakdown: [reports/tool-calling.md](reports/tool-calling.md).
   including extracting `billing-core` out of a stacktrace embedded in a Russian question. The
   delta is a real metric, but this first case set is too easy to expose it — harder cases
   (ambiguous arguments, Russian-language service names, larger tool sets) come next.
+- **Verify the runtime pair, not the model card.** The two roster surprises went in opposite
+  directions: `qwen3-vl:30b` — a vision-language variant one might exclude on paper — scored a
+  flawless 12/12 at ~3.3 s/case (vs ~1.0 s for the 7B), while `gemma3:1b` is rejected by Ollama
+  before inference even starts (`does not support tools`, HTTP 400). Both facts cost one
+  harness run each to establish.
 - **Sample size caveat:** 6 mirrored pairs, one run, temperature 0. Treat as a smoke test of
   the harness, not as a leaderboard.
 
 ## Repo layout
 
 ```
-patterns/     runnable examples with their own READMEs (the "how")
-suites/       benchmark cases as YAML (the "what is measured")
-harness/      runner · adapters (ollama | lmstudio | vllm) · scorers · report
-runs/         raw responses, JSONL, git-ignored
-reports/      generated comparison tables and write-ups
-data/         corpora — fetched or local, git-ignored
+patterns/                     runnable examples with their own READMEs (the "how")
+suites/<suite>/cases.yaml     benchmark cases (the "what is measured")
+suites/<suite>/tools.py       tool schemas offered to the model, per suite
+harness/run.py                the model × case matrix runner
+harness/adapters.py           runtime registry: ollama | lmstudio | vllm
+harness/score.py              deterministic scorer + markdown report writer
+runs/                         raw responses, JSONL — git-ignored (large, regenerable)
+reports/                      generated comparison tables — committed, they are the product
+data/                         corpora, fetched or local — git-ignored
 ```
 
 ## License

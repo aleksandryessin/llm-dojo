@@ -3,6 +3,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
-uv.lock
 runs/
 data/
+
