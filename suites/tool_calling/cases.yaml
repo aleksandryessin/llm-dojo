@@ -1,0 +1,152 @@
+suite: tool-calling
+version: 1
+
+# Every case exists as a mirrored EN/RU pair sharing one `pair` id, so the report can show
+# the EN→RU delta per model — the number this suite exists for.
+
+system:
+  en: >-
+    You are an on-call support engineer for a microservice platform. Use the provided tools
+    when they help answer the question; answer directly when no tool is needed.
+  ru: >-
+    Ты — дежурный инженер поддержки микросервисной платформы. Используй предоставленные
+    инструменты, когда они помогают ответить; отвечай напрямую, когда инструменты не нужны.
+
+cases:
+  # --- 1. simple: one obvious tool, the argument is stated verbatim -----------------
+  - id: simple_deps_en
+    pair: simple_deps
+    type: simple
+    lang: en
+    prompt: What does payments-service depend on?
+    expect:
+      tools: [get_dependencies]
+      args:
+        get_dependencies:
+          equal: {service: payments-service}
+
+  - id: simple_deps_ru
+    pair: simple_deps
+    type: simple
+    lang: ru
+    prompt: От чего зависит payments-service?
+    expect:
+      tools: [get_dependencies]
+      args:
+        get_dependencies:
+          equal: {service: payments-service}
+
+  # --- 2. argument extraction: the name is buried inside a stacktrace ---------------
+  - id: arg_extraction_en
+    pair: arg_extraction
+    type: arg_extraction
+    lang: en
+    prompt: |
+      This just landed in our error channel:
+      ERROR [billing-core] NullPointerException
+          at com.acme.billing.InvoiceService.calculateTotal(InvoiceService.java:88)
+      Which systems does the failing service pull in?
+    expect:
+      tools: [get_dependencies]
+      args:
+        get_dependencies:
+          equal: {service: billing-core}
+
+  - id: arg_extraction_ru
+    pair: arg_extraction
+    type: arg_extraction
+    lang: ru
+    prompt: |
+      Только что прилетело в канал ошибок:
+      ERROR [billing-core] NullPointerException
+          at com.acme.billing.InvoiceService.calculateTotal(InvoiceService.java:88)
+      Какие системы тянет за собой сбойный сервис?
+    expect:
+      tools: [get_dependencies]
+      args:
+        get_dependencies:
+          equal: {service: billing-core}
+
+  # --- 3. multi-tool: two different tools needed in one turn ------------------------
+  - id: multi_tool_en
+    pair: multi_tool
+    type: multi_tool
+    lang: en
+    prompt: Who owns billing-core, and what does it depend on?
+    expect:
+      tools: [get_service_owner, get_dependencies]
+      args:
+        get_service_owner:
+          equal: {service: billing-core}
+        get_dependencies:
+          equal: {service: billing-core}
+
+  - id: multi_tool_ru
+    pair: multi_tool
+    type: multi_tool
+    lang: ru
+    prompt: Какая команда владеет billing-core и от чего он зависит?
+    expect:
+      tools: [get_service_owner, get_dependencies]
+      args:
+        get_service_owner:
+          equal: {service: billing-core}
+        get_dependencies:
+          equal: {service: billing-core}
+
+  # --- 4. free-form search: the keyword is the model's choice -----------------------
+  - id: ticket_search_en
+    pair: ticket_search
+    type: search
+    lang: en
+    prompt: Users report getting the same notification twice. Did we hit this before?
+    expect:
+      tools: [search_tickets]
+      args:
+        search_tickets:
+          contains: {keyword: [duplicate, notification, twice]}
+
+  - id: ticket_search_ru
+    pair: ticket_search
+    type: search
+    lang: ru
+    prompt: Пользователи жалуются, что уведомление приходит дважды. Мы с таким уже сталкивались?
+    expect:
+      tools: [search_tickets]
+      args:
+        search_tickets:
+          contains: {keyword: [дубл, уведомл, дважды, duplicate, notification]}
+
+  # --- 5. no tool: general knowledge, calling a tool is the failure -----------------
+  - id: no_tool_general_en
+    pair: no_tool_general
+    type: no_tool
+    lang: en
+    prompt: What does the abbreviation NPE stand for in Java?
+    expect:
+      tools: []
+
+  - id: no_tool_general_ru
+    pair: no_tool_general
+    type: no_tool
+    lang: ru
+    prompt: Что означает аббревиатура NPE в Java?
+    expect:
+      tools: []
+
+  # --- 6. no tool: out of domain entirely ------------------------------------------
+  - id: no_tool_offdomain_en
+    pair: no_tool_offdomain
+    type: no_tool
+    lang: en
+    prompt: What is 17 multiplied by 3?
+    expect:
+      tools: []
+
+  - id: no_tool_offdomain_ru
+    pair: no_tool_offdomain
+    type: no_tool
+    lang: ru
+    prompt: Сколько будет 17 умножить на 3?
+    expect:
+      tools: []
