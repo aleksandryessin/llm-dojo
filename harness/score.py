@@ -10,6 +10,7 @@ Usage:
 """
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -38,6 +39,47 @@ def check_args(expected: dict, actual: dict) -> tuple[bool, str]:
         if not any(norm(opt) in got for opt in options):
             return False, f"{arg}={actual.get(arg)!r} contains none of {options}"
     return True, ""
+
+
+REFUSAL = "NOT_IN_CORPUS"
+
+
+def cyrillic_ratio(text: str) -> float:
+    letters = [c for c in text if c.isalpha()]
+    return sum("а" <= c.lower() <= "я" or c.lower() == "ё" for c in letters) / len(letters) if letters else 0.0
+
+
+def language_ok(lang: str, answer: str) -> bool:
+    """RU answers must be mostly Cyrillic; EN answers mostly not (tech terms stay Latin)."""
+    ratio = cyrillic_ratio(answer)
+    return ratio >= 0.3 if lang == "ru" else ratio <= 0.1
+
+
+def score_rag_record(rec: dict, case: dict) -> dict:
+    if rec.get("error"):
+        return {**rec, "passed": False, "reason": rec["error"]}
+    answer = rec["answer"]
+    refused = REFUSAL in answer
+    lang_ok = language_ok(case["lang"], answer)
+    expect = case.get("expect") or {}
+
+    if case["type"] == "unanswerable":
+        passed = refused and lang_ok
+        reason = "" if passed else ("answered instead of refusing" if not refused else "wrong language")
+        return {**rec, "passed": passed, "reason": reason,
+                "refused": refused, "lang_ok": lang_ok, "retrieval_hit": None}
+
+    # answerable
+    retrieval_hit = expect["source"] in rec["sources"]
+    grounded = any(norm(f) in norm(answer) for f in expect["facts_any"])
+    cited = bool(re.search(r"\[\d+\]", answer))
+    passed = grounded and not refused and lang_ok
+    reason = ("" if passed else
+              "refused on an answerable question" if refused else
+              f"missing all expected facts {expect['facts_any']}" if not grounded else
+              "wrong language")
+    return {**rec, "passed": passed, "reason": reason, "refused": refused,
+            "lang_ok": lang_ok, "retrieval_hit": retrieval_hit, "cited": cited}
 
 
 def score_record(rec: dict, case: dict) -> dict:
@@ -70,7 +112,8 @@ def main() -> None:
     spec = yaml.safe_load((ROOT / "suites" / suite.replace("-", "_") / "cases.yaml").read_text(encoding="utf-8"))
     cases = {c["id"]: c for c in spec["cases"]}
 
-    scored = [score_record(r, cases[r["case_id"]]) for r in records]
+    scorer = score_rag_record if spec.get("kind") == "rag" else score_record
+    scored = [scorer(r, cases[r["case_id"]]) for r in records]
 
     # aggregate: per model per language, plus the EN->RU delta this suite exists for
     agg = defaultdict(lambda: defaultdict(list))

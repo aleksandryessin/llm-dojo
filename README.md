@@ -40,7 +40,7 @@ a narrower slot they do not cover:
 | [01](patterns/01-react-agent-langgraph/) | ReAct agent on LangGraph primitives | ✅ | State + reducers, nodes, conditional edges, tool-calling loop — and why tool contracts beat prompt tuning |
 | [02](patterns/02-schema-guided-reasoning/) | Schema-Guided Reasoning (SGR) | ✅ | A Pydantic schema as the reasoning scaffold; structured output from a 7B model |
 | [03](patterns/03-llm-serving-bench/) | Serving micro-benchmark | ✅ | TTFT / tok/s over an OpenAI-compatible endpoint |
-| 04 | RAG with citations over a docs corpus | 🚧 | Chunking, embeddings, retrieval, refusal when the answer is absent |
+| [04](patterns/04-rag-citations/) | RAG with citations over a docs corpus | ✅ | Structure-aware chunking, citations, refusal as a scored behaviour — and when a dot product beats a vector DB |
 | 05 | Agent memory & human-in-the-loop | 🚧 | Checkpointers, thread isolation, approval gates before destructive tools |
 
 ### Suites — what the models are scored on
@@ -53,8 +53,8 @@ decides whether a model is usable for a non-English deployment.
 | Suite | Cases | Derived from | Scored by | Status |
 |-------|-------|--------------|-----------|--------|
 | [`tool-calling`](suites/tool_calling/) | 6 pairs | pattern 01 | exact tool-set match + argument match; calling any tool on a `no_tool` case is a failure | ✅ |
+| [`rag-grounding`](suites/rag_grounding/) | 9 pairs (6 answerable + 3 unanswerable) | pattern 04 | grounding in expected facts + citation presence + refusal correctness + **language adherence** — all deterministic; retrieval hit reported separately (it measures the embedder, not the model). RAGAS as a second layer is planned | ✅ |
 | `schema-adherence` | – | pattern 02 | JSON validity against the schema, then field-level correctness | 🚧 |
-| `rag-grounding` | – | pattern 04 | RAGAS faithfulness / context precision + refusal rate on unanswerable questions | 🚧 |
 | `speed` | – | pattern 03 | TTFT, decode tok/s, peak memory — per model **and per runtime** | 🚧 |
 
 Case types in `tool-calling`: *simple* (argument stated verbatim), *arg_extraction* (name buried
@@ -138,7 +138,8 @@ because "I don't know" is a scored behaviour, not a missing answer.
 Prerequisites: [Ollama](https://ollama.com), Python ≥ 3.11, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-ollama pull qwen2.5:7b && ollama pull llama3.2:3b   # the two models compared below
+ollama pull qwen2.5:7b && ollama pull llama3.2:3b   # baseline + reference
+# optional heavyweight from the Results table (19 GB): ollama pull qwen3-vl:30b
 git clone https://github.com/aleksandryessin/llm-dojo && cd llm-dojo
 uv sync                                             # exact versions come from uv.lock
 ```
@@ -170,15 +171,16 @@ reproducible with the commands above. Tables are filled in as suites land.
 
 **Capability** — score per suite, 0–1, shown as EN / RU / delta:
 
-| Model | tool-calling (EN) | tool-calling (RU) | Δ EN→RU | schema-adherence | rag-grounding |
-|-------|-------------------|-------------------|---------|------------------|---------------|
-| `llama3.2:3b` | 0.83 | 0.83 | +0.00 | – | – |
-| `qwen2.5:7b` | 1.00 | 1.00 | +0.00 | – | – |
-| `qwen3-vl:30b` | 1.00 | 1.00 | +0.00 | – | – |
-| `gemma3:1b` | ✗ no tool support in Ollama (HTTP 400) | ✗ | n/a | – | – |
+| Model | tool-calling EN / RU | Δ | rag-grounding EN / RU | Δ | schema-adherence |
+|-------|----------------------|---|------------------------|---|------------------|
+| `llama3.2:3b` | 0.83 / 0.83 | 0.00 | 0.67 / 0.33 | **−0.33** | – |
+| `qwen2.5:7b` | 1.00 / 1.00 | 0.00 | 0.78 / 0.11 | **−0.67** | – |
+| `qwen3-vl:30b` | 1.00 / 1.00 | 0.00 | 0.89 / 0.56 | **−0.33** | – |
+| `gemma3:1b` | ✗ no tools in Ollama | n/a | 0.89 / 0.00 | **−0.89** | – |
 | _challenger (8–14B, tbd)_ | – | – | – | – | – |
 
-Full per-case breakdown: [reports/tool-calling.md](reports/tool-calling.md).
+Full per-case breakdowns: [reports/tool-calling.md](reports/tool-calling.md),
+[reports/rag-grounding.md](reports/rag-grounding.md).
 
 **Cost** — speed and memory, per runtime:
 
@@ -189,6 +191,23 @@ Full per-case breakdown: [reports/tool-calling.md](reports/tool-calling.md).
 | `Qwen2.5-7B-AWQ` | vLLM, 1×24 GB GPU | – | – | – |
 
 **Findings** — the part that actually matters: what broke, on which model, and why.
+
+- **The EN→RU delta is real, large, and invisible on easy tasks.** On `tool-calling` every model
+  scored identically in both languages (Δ 0.00). On `rag-grounding` — same corpus, same
+  retrieval, only the question language changes — every model degraded: −0.33 to −0.89.
+  The poster child is `gemma3:1b`: **best-in-class in English (0.89) and zero in Russian
+  (0.00)**. An English leaderboard score genuinely says nothing about a Russian deployment.
+- **The drift you cannot see in aggregates:** `qwen2.5:7b` answered two questions in
+  *Chinese* (an English question about Ragas, a Russian one about France). The RU language
+  check caught it; the EN check did not — it only detects Cyrillic, and Chinese sails through.
+  A known limitation, kept as a TODO in the scorer.
+- **Small models corrupt protocol markers.** One refusal came back as `NOT_IN_CORPORUS`
+  (sic) — a correct refusal failed exact-match scoring because a 7B model could not reproduce
+  the token verbatim. Machine-checkable markers for small models must be matched fuzzily.
+- **Retrieval errors masquerade as generation errors.** `uv_what_en` failed with "missing
+  expected facts" — but the answer was faithful to its context; top-k simply surfaced the
+  "drop-in replacement" chunk instead of the "written in Rust" intro. Without storing raw
+  sources per run, this would have been blamed on the model.
 
 - **Tool over-triggering scales with domain adjacency, not with difficulty.** `llama3.2:3b`
   answered "what is 17 × 3?" correctly without tools, but reached for `get_dependencies` on
@@ -201,7 +220,7 @@ Full per-case breakdown: [reports/tool-calling.md](reports/tool-calling.md).
   (ambiguous arguments, Russian-language service names, larger tool sets) come next.
 - **Verify the runtime pair, not the model card.** The two roster surprises went in opposite
   directions: `qwen3-vl:30b` — a vision-language variant one might exclude on paper — scored a
-  flawless 12/12 at ~3.3 s/case (vs ~1.0 s for the 7B), while `gemma3:1b` is rejected by Ollama
+  flawless 12/12 at ~3 s/case (vs ~1 s for the 7B), while `gemma3:1b` is rejected by Ollama
   before inference even starts (`does not support tools`, HTTP 400). Both facts cost one
   harness run each to establish.
 - **Sample size caveat:** 6 mirrored pairs, one run, temperature 0. Treat as a smoke test of

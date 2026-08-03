@@ -1,0 +1,158 @@
+suite: rag-grounding
+kind: rag
+version: 1
+
+# Mirrored EN/RU pairs over the docs corpus (data/docs/, see patterns/04).
+# Two case types:
+#   answerable   — pass = answer contains at least one expected fact, cites [n],
+#                  does NOT refuse, and is in the language of the question
+#   unanswerable — pass = answer starts with/contains NOT_IN_CORPUS, in the right language
+# retrieval_hit (expected source in top-k) is reported separately: it measures the
+# embedder, not the chat model.
+
+cases:
+  # --- answerable ------------------------------------------------------------------
+  - id: vllm_throughput_en
+    pair: vllm_throughput
+    lang: en
+    type: answerable
+    prompt: How does vLLM achieve high throughput?
+    expect:
+      source: vllm-readme.md
+      facts_any: [PagedAttention, continuous batching]
+
+  - id: vllm_throughput_ru
+    pair: vllm_throughput
+    lang: ru
+    type: answerable
+    prompt: За счёт чего vLLM достигает высокой пропускной способности?
+    expect:
+      source: vllm-readme.md
+      facts_any: [PagedAttention, continuous batching, непрерывн]
+
+  - id: uv_what_en
+    pair: uv_what
+    lang: en
+    type: answerable
+    prompt: What is uv and why is it fast?
+    expect:
+      source: uv-readme.md
+      facts_any: [Rust, "faster than pip"]
+
+  - id: uv_what_ru
+    pair: uv_what
+    lang: ru
+    type: answerable
+    prompt: Что такое uv и почему он быстрый?
+    expect:
+      source: uv-readme.md
+      facts_any: [Rust, "быстрее pip", "faster than pip"]
+
+  - id: langgraph_what_en
+    pair: langgraph_what
+    lang: en
+    type: answerable
+    prompt: What kind of framework is LangGraph and what is it for?
+    expect:
+      source: langgraph-readme.md
+      facts_any: [stateful, orchestrat, agent]
+
+  - id: langgraph_what_ru
+    pair: langgraph_what
+    lang: ru
+    type: answerable
+    prompt: Что за фреймворк LangGraph и для чего он нужен?
+    expect:
+      source: langgraph-readme.md
+      facts_any: [агент, оркестр, stateful]
+
+  - id: ragas_what_en
+    pair: ragas_what
+    lang: en
+    type: answerable
+    prompt: What problem does Ragas solve?
+    expect:
+      source: ragas-readme.md
+      facts_any: [evaluat]
+
+  - id: ragas_what_ru
+    pair: ragas_what
+    lang: ru
+    type: answerable
+    prompt: Какую задачу решает Ragas?
+    expect:
+      source: ragas-readme.md
+      facts_any: [оцен, evaluat]
+
+  - id: ollama_run_en
+    pair: ollama_run
+    lang: en
+    type: answerable
+    prompt: How do I run a model with Ollama from the command line?
+    expect:
+      source: ollama-readme.md
+      facts_any: ["ollama run"]
+
+  - id: ollama_run_ru
+    pair: ollama_run
+    lang: ru
+    type: answerable
+    prompt: Как запустить модель в Ollama из командной строки?
+    expect:
+      source: ollama-readme.md
+      facts_any: ["ollama run"]
+
+  - id: ollama_chat_api_en
+    pair: ollama_chat_api
+    lang: en
+    type: answerable
+    prompt: Which Ollama API endpoint should I use for a chat conversation?
+    expect:
+      source: ollama-api.md
+      facts_any: ["/api/chat"]
+
+  - id: ollama_chat_api_ru
+    pair: ollama_chat_api
+    lang: ru
+    type: answerable
+    prompt: Какой эндпоинт API Ollama использовать для чат-диалога?
+    expect:
+      source: ollama-api.md
+      facts_any: ["/api/chat"]
+
+  # --- unanswerable: the honest answer is a refusal --------------------------------
+  - id: off_capital_en
+    pair: off_capital
+    lang: en
+    type: unanswerable
+    prompt: What is the capital of France?
+
+  - id: off_capital_ru
+    pair: off_capital
+    lang: ru
+    type: unanswerable
+    prompt: Какая столица у Франции?
+
+  - id: off_kafka_en
+    pair: off_kafka
+    lang: en
+    type: unanswerable
+    prompt: How do I configure Kafka partition rebalancing?
+
+  - id: off_kafka_ru
+    pair: off_kafka
+    lang: ru
+    type: unanswerable
+    prompt: Как настроить ребалансировку партиций в Kafka?
+
+  - id: off_pricing_en
+    pair: off_pricing
+    lang: en
+    type: unanswerable
+    prompt: How much does vLLM enterprise support cost per month?
+
+  - id: off_pricing_ru
+    pair: off_pricing
+    lang: ru
+    type: unanswerable
+    prompt: Сколько стоит месячная enterprise-поддержка vLLM?

@@ -24,11 +24,25 @@ RUNS = ROOT / "runs"
 
 
 def load_suite(name: str):
-    """A suite = cases.yaml (data) + tools.py (the tool schemas offered to the model)."""
+    """A suite = cases.yaml (data) + optional tools.py (tool schemas offered to the model)."""
     folder = SUITES / name.replace("-", "_")
     spec = yaml.safe_load((folder / "cases.yaml").read_text(encoding="utf-8"))
-    tools = importlib.import_module(f"suites.{folder.name}.tools").TOOLS
+    tools = None
+    if (folder / "tools.py").exists():
+        tools = importlib.import_module(f"suites.{folder.name}.tools").TOOLS
     return spec, tools
+
+
+def load_rag_pipeline():
+    """The system under test for `kind: rag` suites is pattern 04 itself — import by path
+    (the folder name has a dash, so it is not a regular module)."""
+    import importlib.util
+
+    path = ROOT / "patterns" / "04-rag-citations" / "rag.py"
+    module_spec = importlib.util.spec_from_file_location("rag_pattern", path)
+    rag = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(rag)
+    return rag
 
 
 def run_case(client, model: str, system: str, prompt: str, tools: list) -> dict:
@@ -74,6 +88,12 @@ def main() -> None:
     client = get_client(args.runtime)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
 
+    kind = spec.get("kind", "tool_call")
+    rag = chunks = None
+    if kind == "rag":
+        rag = load_rag_pipeline()
+        chunks = rag.load_index()          # one index for every model — same cases everywhere
+
     RUNS.mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = RUNS / f"{stamp}-{args.suite}.jsonl"
@@ -82,8 +102,23 @@ def main() -> None:
         for model in models:
             print(f"\n=== {model} ({args.runtime})")
             for case in spec["cases"]:
-                system = spec["system"][case["lang"]]
-                result = run_case(client, model, system, case["prompt"], tools)
+                if kind == "rag":
+                    started = time.perf_counter()
+                    try:
+                        r = rag.ask(case["prompt"], chunks=chunks, model=model)
+                        result = {
+                            "answer": r["answer"],
+                            "sources": r["sources"],
+                            "top_cos": r["top_cos"],
+                            "latency_s": time.perf_counter() - started,
+                            "error": None,
+                        }
+                    except Exception as exc:
+                        result = {"error": f"{type(exc).__name__}: {exc}",
+                                  "latency_s": time.perf_counter() - started}
+                else:
+                    system = spec["system"][case["lang"]]
+                    result = run_case(client, model, system, case["prompt"], tools)
                 record = {
                     "suite": args.suite,
                     "model": model,
@@ -96,8 +131,12 @@ def main() -> None:
                 }
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 fh.flush()
-                mark = "ERR" if result.get("error") else ", ".join(
-                    c["name"] for c in result["tool_calls"]) or "(no tool)"
+                if result.get("error"):
+                    mark = "ERR"
+                elif kind == "rag":
+                    mark = "REFUSED" if "NOT_IN_CORPUS" in result["answer"] else "answered"
+                else:
+                    mark = ", ".join(c["name"] for c in result["tool_calls"]) or "(no tool)"
                 print(f"  {case['id']:24s} {result['latency_s']:5.1f}s  -> {mark}")
 
     print(f"\nraw runs: {out.relative_to(ROOT)}\nnext: uv run -m harness.score --runs {out.name}")
