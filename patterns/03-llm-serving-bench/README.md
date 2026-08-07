@@ -16,7 +16,7 @@ Ollama, vLLM, LM Studio or a cloud provider — only `base_url` changes.
 - LLM decoding is **memory-bandwidth-bound**: quantization (Q4) speeds it up roughly
   proportionally to bytes moved, not FLOPs.
 - Single-user Ollama vs batched vLLM: aggregate tok/s under concurrency is where vLLM
-  (continuous batching + PagedAttention) changes the game — see roadmap pattern 06.
+  (continuous batching + PagedAttention) changes the game — see pattern 05.
 
 ## Run
 

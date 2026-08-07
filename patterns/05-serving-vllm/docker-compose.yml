@@ -1,0 +1,191 @@
+# Production contour on one machine: graph store + cache + app, with inference on the host
+# and tracing behind a profile.
+#
+# Success criterion: `docker compose down -v && docker compose up -d` brings everything up
+# with zero manual steps. Anything that needs a human is a bug in this file.
+#
+# Two deliberate absences:
+#
+# * **Ollama is not a service here.** Docker Desktop on macOS does not pass the GPU through,
+#   so a containerised Ollama would run on CPU — slower than the host one and holding a
+#   second copy of every model. The app reaches the host daemon over the network instead.
+#   On a Linux box with an NVIDIA card the trade-off reverses: `--profile linux-gpu`.
+# * **Tracing is opt-in** (`--profile tracing`). Langfuse plus its Postgres is the heaviest
+#   part of the contour and observability must never be the reason the app will not start.
+#
+# Every service has a healthcheck, and dependants wait on `service_healthy` rather than on
+# `service_started` — a container being up says nothing about the process inside it.
+
+services:
+  neo4j:
+    image: neo4j:5.24
+    container_name: dojo-neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"   # browser: look at the graph with your eyes
+      - "${NEO4J_BOLT_PORT:-7687}:7687"   # bolt: what the driver connects to
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_apoc_export_file__enabled: "true"
+      NEO4J_apoc_import_file__enabled: "true"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1G}
+    volumes:
+      - neo4j_data:/data
+      - ./backups:/backups          # target for the dump command in the README
+    healthcheck:
+      # Not "is the port open" but "does the database answer a query" — Neo4j listens on
+      # 7687 well before it can serve Cypher.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: dojo-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-512mb}
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dojo-app
+    depends_on:
+      neo4j: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      # Deliberately NOT depending on langfuse: tracing is a nice-to-have, and a hard
+      # dependency on it would make the observability stack a single point of failure for
+      # the thing it observes.
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    extra_hosts:
+      # Docker Desktop provides host.docker.internal already; this line makes the same name
+      # resolve on Linux, so the compose file is not macOS-only.
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Service addresses are URLs from the environment, never hardcoded hosts — the same
+      # "one seam for inference" rule as harness/adapters.py.
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      # Empty by default: the app treats tracing as optional and runs without it.
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen2.5:7b}
+      SEMANTIC_CACHE_THRESHOLD: ${SEMANTIC_CACHE_THRESHOLD:-0.95}
+      SEMANTIC_CACHE_TTL_S: ${SEMANTIC_CACHE_TTL_S:-3600}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------------
+  # profile: tracing —  docker compose --profile tracing up -d
+  # ---------------------------------------------------------------------------------
+  postgres:
+    profiles: ["tracing"]
+    image: postgres:16-alpine
+    container_name: dojo-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-langfuse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-langfuse}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  langfuse:
+    profiles: ["tracing"]
+    image: langfuse/langfuse:2
+    container_name: dojo-langfuse
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-langfuse}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-langfuse}
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?generate with openssl rand -base64 32}
+      SALT: ${LANGFUSE_SALT:?generate with openssl rand -base64 32}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?generate with openssl rand -hex 32}
+      TELEMETRY_ENABLED: "false"
+      # Headless bootstrap: org, project and API keys are created on first boot from these
+      # values instead of by clicking through the UI. This is what makes "zero manual steps"
+      # survive a `down -v`.
+      LANGFUSE_INIT_ORG_ID: dojo
+      LANGFUSE_INIT_PROJECT_ID: dojo
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY in .env}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY in .env}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_USER_EMAIL:-dojo@localhost}
+      LANGFUSE_INIT_USER_NAME: dojo
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_USER_PASSWORD:?set LANGFUSE_USER_PASSWORD in .env}
+    healthcheck:
+      # No curl in the image; node is guaranteed to be there.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/public/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------------
+  # profile: linux-gpu — only on a Linux host with an NVIDIA card, where a containerised
+  # Ollama can actually reach the GPU. On macOS use the host daemon (see README).
+  # ---------------------------------------------------------------------------------
+  ollama:
+    profiles: ["linux-gpu"]
+    image: ollama/ollama:latest
+    container_name: dojo-ollama
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    environment:
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}
+      OLLAMA_MAX_LOADED_MODELS: 1
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, count: 1, capabilities: [gpu]}
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  redis_data:
+  postgres_data:
+  ollama_data:

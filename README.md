@@ -41,7 +41,8 @@ a narrower slot they do not cover:
 | [02](patterns/02-schema-guided-reasoning/) | Schema-Guided Reasoning (SGR) | ✅ | A Pydantic schema as the reasoning scaffold; structured output from a 7B model |
 | [03](patterns/03-llm-serving-bench/) | Serving micro-benchmark | ✅ | TTFT / tok/s over an OpenAI-compatible endpoint |
 | [04](patterns/04-rag-citations/) | RAG with citations over a docs corpus | ✅ | Structure-aware chunking, citations, refusal as a scored behaviour — and when a dot product beats a vector DB |
-| 05 | Agent memory & human-in-the-loop | 🚧 | Checkpointers, thread isolation, approval gates before destructive tools |
+| [05](patterns/05-serving-vllm/) | vLLM on a rented GPU + a one-command production contour | 🚧 | Serving flags that decide whether the server starts at all (KV cache vs `--max-model-len`), continuous batching under concurrency, and the whole stack in one `docker compose up` |
+| 06 | Agent memory & human-in-the-loop | 🚧 | Checkpointers, thread isolation, approval gates before destructive tools |
 
 ### Suites — what the models are scored on
 
@@ -184,13 +185,35 @@ Full per-case breakdowns: [reports/tool-calling.md](reports/tool-calling.md),
 
 **Cost** — speed and memory, per runtime:
 
-| Model | Runtime | TTFT | Decode tok/s | Peak memory |
-|-------|---------|------|--------------|-------------|
-| `qwen2.5:7b` | Ollama (llama.cpp) | – | – | – |
-| `qwen2.5:7b` | LM Studio (MLX) | – | – | – |
-| `Qwen2.5-7B-AWQ` | vLLM, 1×24 GB GPU | – | – | – |
+20 requests × 256 tokens, temperature 0. TTFT is p50/p95; *aggregate* is all output tokens
+over the wall-clock of the run — the number that separates the two runtimes.
+
+| Model | Runtime | Concurrency | TTFT p50 / p95 | Decode tok/s | Aggregate tok/s |
+|-------|---------|-------------|----------------|--------------|-----------------|
+| `qwen2.5:7b` | Ollama, 1 slot | 1 | 0.11 / 0.12 s | 67.7 | 65.6 |
+| `qwen2.5:7b` | Ollama, 1 slot | 20 | 37.61 / 69.76 s | 67.3 | 65.4 |
+| `qwen2.5:7b` | Ollama, 8 slots | 20 | 25.66 / 50.04 s | 10.5 | 81.8 |
+| `Qwen2.5-7B-AWQ` | vLLM 0.26, RTX A5000 | 1 | 0.57 / 0.88 s | 125.5 | 95.8 |
+| `Qwen2.5-7B-AWQ` | vLLM 0.26, RTX A5000 | 20 | **0.60 / 0.99 s** | 87.0 | **1154.6** |
+| `qwen2.5:7b` | LM Studio (MLX) | – | – | – | – |
+
+Full write-up, flags and incident log: [patterns/05-serving-vllm/](patterns/05-serving-vllm/).
 
 **Findings** — the part that actually matters: what broke, on which model, and why.
+
+- **A runtime's advantage shows up in how it degrades, not in how fast it is.** Single-stream,
+  vLLM on a rented A5000 beat Ollama on an M4 Max by only 1.9× (125.5 vs 67.7 tok/s) — roughly
+  the ratio of memory bandwidth between the two machines. At 20 concurrent clients the gap
+  became **14×** (1154.6 vs 81.8 tok/s aggregate), because per-request decode fell 31% on vLLM
+  and 6.4× on llama.cpp. p95 TTFT: 0.99 s vs 50 s.
+- **Raising `OLLAMA_NUM_PARALLEL` from 1 to 8 bought +25% throughput, not 8×.** The server log
+  shows why: 1 slot × 72.1 = 72 tok/s, 4 × 20.6 = 82, 8 × 10.5 = 84 — total throughput is a
+  constant on Metal. Batching there divides one stream between users instead of multiplying it;
+  dequantising Q4_K weights costs work that grows linearly with batch size.
+- **The KV-cache formula predicts memory before you rent anything.** 2 × layers × kv-heads ×
+  head_dim × 2 bytes = 56 KiB/token for Qwen2.5-7B. Predicted 14 GiB for 8×32k slots on the
+  laptop — `llama-server` reported 14336 MiB. Predicted ~15 GiB and ~30 sequences on a 24 GB
+  card — vLLM reported 14.79 GiB, i.e. 34 sequences.
 
 - **The EN→RU delta is real, large, and invisible on easy tasks.** On `tool-calling` every model
   scored identically in both languages (Δ 0.00). On `rag-grounding` — same corpus, same
