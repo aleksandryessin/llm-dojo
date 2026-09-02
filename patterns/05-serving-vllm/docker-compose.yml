@@ -25,6 +25,12 @@ services:
       - "${NEO4J_BOLT_PORT:-7687}:7687"   # bolt: what the driver connects to
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      # The healthcheck runs *inside* the container, so it needs the password as a variable
+      # there. `NEO4J_AUTH` is consumed by the entrypoint and not re-exported, and a variable
+      # named NEO4J_PASSWORD would be parsed by the image as a config setting — hence the
+      # neutral prefix. Getting this wrong costs 4 minutes of retries and an `unhealthy`
+      # container that is, in fact, perfectly alive.
+      DOJO_NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_apoc_export_file__enabled: "true"
       NEO4J_apoc_import_file__enabled: "true"
@@ -36,7 +42,7 @@ services:
     healthcheck:
       # Not "is the port open" but "does the database answer a query" — Neo4j listens on
       # 7687 well before it can serve Cypher.
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$DOJO_NEO4J_PASSWORD\" 'RETURN 1' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 20

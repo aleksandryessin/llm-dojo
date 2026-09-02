@@ -209,3 +209,15 @@ Filled in as it happens — see the incident log in [RUNBOOK.md](RUNBOOK.md).
 - **A container cannot reach an Ollama bound to loopback.** The daemon defaults to
   `127.0.0.1:11434`; from inside compose that is the container's own loopback, so `app` gets
   connection refused while `curl` on the host works fine. Start it with `OLLAMA_HOST=0.0.0.0`.
+- **A healthy database reported as unhealthy, for four minutes, because of one `$`.** The
+  Neo4j check ran `cypher-shell -p "$$NEO4J_PASSWORD"`, but only `NEO4J_AUTH` was passed into
+  the container — `$$VAR` is expanded *inside* the container, where that name did not exist,
+  so the probe authenticated with an empty password. The symptom is misleading twice over:
+  `docker compose up` says `dependency failed to start: container dojo-neo4j is unhealthy`,
+  while the database is running perfectly and its own log says exactly what happened
+  (`The client is unauthorized due to authentication failure`, once per probe). Diagnosis is
+  `docker inspect --format '{{json .State.Health}}' <container>` — it stores the output of
+  every failed probe. Fix: pass the password under a name the image will not mistake for a
+  config setting (`DOJO_NEO4J_PASSWORD`), since any `NEO4J_*` variable is parsed as one.
+  General rule: **a healthcheck is code, and it fails silently — read its recorded output,
+  not the container status.**
