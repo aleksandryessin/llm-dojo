@@ -1,0 +1,51 @@
+schema_version: 1
+reviewed_at: "2026-09-03"
+scope: >-
+  Synthetic tool-calling cases, answers over public documentation, and serving timings.
+  No customer data, credentials, local paths, or provider endpoints are present.
+
+capability:
+  - path: runs/20260729T173918Z-tool-calling.jsonl
+    sha256: 89ba6a1fff7fc637475d23b63dea517d8012952932baff387648181036bdacc6
+    host: Apple M4 Max, 36 GB unified memory
+    runtime: Ollama
+    note: Canonical four-model tool-calling run; 12 mirrored cases per model.
+  - path: runs/20260730T-rag-grounding-all4.jsonl
+    sha256: d9ca9d192afe645a47c0072fa9c5c423184411bc07817d21d680c260b67aefc4
+    host: Apple M4 Max, 36 GB unified memory
+    runtime: Ollama
+    note: Canonical four-model RAG run; 18 mirrored cases per model.
+    corpus_sha256:
+      langfuse-readme.md: 439722781c20016acc5fffa98a96ed050da0db9ff8ca9db975ae9f8474ac7a5f
+      langgraph-readme.md: 3a13e257af1216962d53d72414a7f44ac1fc5cea34d994bdff60ea2a3b045933
+      langsmith-sdk-readme.md: ad227543e2cee2a00ccb9a44e79bc25df3c6a0cc29ef713dbbc9600069d78346
+      ollama-api.md: 7e0bc5ccce5e868cecaf3f419531ed21cd13b4001718631303f43c9545e1f4d3
+      ollama-readme.md: 38f94429ec63c78f2c87dc47ff2bbba91bd93edd697c638b9daa7eda3ae5adb2
+      pgvector-readme.md: 15bd90b75711a296756e19ce4d3565227189f8e6012530164e280047c7862921
+      qdrant-client-readme.md: 668410ed85174072122d80788c50ef7f19ea1ac88ebf394c4d9e0b6f8504561e
+      qdrant-readme.md: 24b212009b110b7a4f995f81bbc032abf39dd2830c778228d417f960bd1e8ef7
+      ragas-readme.md: af20b2258507b12bf930e897b63ee5bb87aac4a4696da078ea5a3c29addb6db7
+      uv-readme.md: 57a84a5a635f30e3a26541ebc16ca690944a7750f05713b1af92d3170b58f704
+      vllm-readme.md: 8d2e7cd8d120bcd91ddfa85ef957f7246021b4a3f46f2e1f4ccf084ec6c20026
+
+serving:
+  - path: runs/20260805T122710Z-speed-ollama-qwen2.5-7b-c1.jsonl
+    sha256: 4cd9ac71e8db7e1a1f33a37999c204b1cf06a5b3d97edd637c2a006c756b1f7b
+    host: Apple M4 Max, 36 GB unified memory
+    runtime: Ollama, OLLAMA_NUM_PARALLEL=1
+  - path: runs/20260805T122935Z-speed-ollama-qwen2.5-7b-c20.jsonl
+    sha256: 2995cfc212a722923b6a632ad6784cfb0b2dac738b634b74f0160be8022390ab
+    host: Apple M4 Max, 36 GB unified memory
+    runtime: Ollama, OLLAMA_NUM_PARALLEL=1
+  - path: runs/20260805T191656Z-speed-ollama-qwen2.5-7b-c20.jsonl
+    sha256: e69dc59a32aff15c4efb987ec275ec132d51aca88bc17a389e6eb6302f4e45f8
+    host: Apple M4 Max, 36 GB unified memory
+    runtime: Ollama, OLLAMA_NUM_PARALLEL=8
+  - path: runs/20260807T161026Z-speed-vllm-qwen2.5-7b-awq-c1.jsonl
+    sha256: 358612217fed8562e23211a87e083d6d4affcaed5599d0bc56c1976bcdd77487
+    host: rented RTX A5000, 24 GB, EU-SE-1
+    runtime: vLLM 0.26
+  - path: runs/20260807T161048Z-speed-vllm-qwen2.5-7b-awq-c20.jsonl
+    sha256: 07a1673891f68ea7a013f3e35e1dc86019ee0a5997b5b333f856fa14fe0758b7
+    host: rented RTX A5000, 24 GB, EU-SE-1
+    runtime: vLLM 0.26

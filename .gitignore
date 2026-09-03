@@ -3,6 +3,30 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
-runs/
-data/
+.env.*
+!.env.example
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.pdf
+*.docx
+*.pptx
+*.key
+*.pem
 
+# Ad-hoc runs stay local. Only the reviewed evidence set below is publishable.
+runs/*
+!runs/README.md
+!runs/evidence.yaml
+!runs/20260729T173918Z-tool-calling.jsonl
+!runs/20260730T-rag-grounding-all4.jsonl
+!runs/20260805T122710Z-speed-ollama-qwen2.5-7b-c1.jsonl
+!runs/20260805T122935Z-speed-ollama-qwen2.5-7b-c20.jsonl
+!runs/20260805T191656Z-speed-ollama-qwen2.5-7b-c20.jsonl
+!runs/20260807T161026Z-speed-vllm-qwen2.5-7b-awq-c1.jsonl
+!runs/20260807T161048Z-speed-vllm-qwen2.5-7b-awq-c20.jsonl
+data/

@@ -13,17 +13,17 @@ Two halves:
 - **Harness** — a benchmark that runs those same tasks across models and runtimes and produces
   comparison tables.
 
-**State today:** three patterns and one suite (`tool-calling`, 6 mirrored EN/RU pairs) run
-end-to-end on Ollama; results below. The other suites are not written yet, and the LM Studio /
-GPU runtimes have adapters but no recorded runs — every table marks what is real with ✅ and
-what is not with 🚧.
+**State today:** four runnable patterns and two suites (`tool-calling`, 6 mirrored EN/RU pairs;
+`rag-grounding`, 9 pairs) have reviewed Ollama evidence. A fifth pattern contains measured vLLM
+serving results plus an explicitly unfinished integration skeleton. LM Studio remains untested.
+Every table marks implemented work with ✅ and incomplete work with 🚧.
 
 ### Prior art, and what is different here
 
 Tool calling already has serious benchmarks — [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html)
 covers it far more thoroughly, [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)
-is the standard for academic tasks, [RAGAS](https://docs.ragas.io) owns RAG metrics (and is used
-here as a library, not competed with). This repo does not try to out-benchmark them. It occupies
+is the standard for academic tasks, and [RAGAS](https://docs.ragas.io) owns RAG metrics. This
+repo does not try to out-benchmark them. It occupies
 a narrower slot they do not cover:
 
 - **Consumer hardware, not a cluster** — the question is what a 36 GB laptop can actually run.
@@ -41,7 +41,7 @@ a narrower slot they do not cover:
 | [02](patterns/02-schema-guided-reasoning/) | Schema-Guided Reasoning (SGR) | ✅ | A Pydantic schema as the reasoning scaffold; structured output from a 7B model |
 | [03](patterns/03-llm-serving-bench/) | Serving micro-benchmark | ✅ | TTFT / tok/s over an OpenAI-compatible endpoint |
 | [04](patterns/04-rag-citations/) | RAG with citations over a docs corpus | ✅ | Structure-aware chunking, citations, refusal as a scored behaviour — and when a dot product beats a vector DB |
-| [05](patterns/05-serving-vllm/) | vLLM on a rented GPU + a one-command production contour | 🚧 | Serving flags that decide whether the server starts at all (KV cache vs `--max-model-len`), continuous batching under concurrency, and the whole stack in one `docker compose up` |
+| [05](patterns/05-serving-vllm/) | vLLM on a rented GPU + integration contour | 🚧 | Measured continuous batching and KV-cache sizing; Compose wiring is present, but semantic-cache behavior remains a documented TODO |
 | 06 | Agent memory & human-in-the-loop | 🚧 | Checkpointers, thread isolation, approval gates before destructive tools |
 
 ### Suites — what the models are scored on
@@ -62,9 +62,9 @@ Case types in `tool-calling`: *simple* (argument stated verbatim), *arg_extracti
 in a stacktrace), *multi_tool* (two tools in one turn), *search* (free-form keyword the model
 chooses), *no_tool* ×2 (answerable without tools — calling one is the failure).
 
-Scoring is deterministic wherever possible (parsing, set comparison, normalised string match);
-an LLM judge is used only where it cannot be avoided, and is reported separately because
-judges are biased.
+Current scoring is deterministic (parsing, multiset comparison, normalized string match,
+citations, refusal markers, and language heuristics). A future LLM judge must be optional and
+reported separately because judges are biased.
 
 🚧 means *not written yet*. Nothing in these tables is a claim about code that already exists.
 
@@ -78,11 +78,11 @@ one adapter interface, so adding a model or a whole runtime never touches the sc
  ┌───────────────┐   cases   ┌────────────────┐  prompts  ┌────────────────────┐
  │ tool-calling ✅│─────────► │  runner        │─────────► │ ollama          ✅ │──► local
  │ schema-adh.  🚧│           │  matrix:       │           │ lmstudio (MLX)  🚧 │──► local
- │ rag-grounding🚧│           │  model × case  │ ◄─────────│ vllm (GPU)      🚧 │──► rented
+ │ rag-grounding✅│           │  model × case  │ ◄─────────│ vllm (GPU)      ✅ │──► rented
  │ speed        🚧│           └───────┬────────┘ responses └────────────────────┘
  └───────────────┘                   │           + latency, tokens
                                      ▼
-                        runs/*.jsonl  (raw: response, timings — never rewritten)
+                        runs/*.jsonl  (reviewed evidence is allow-listed; never rewritten)
                                      │
                                      ▼
                         harness/score.py  (deterministic now · RAGAS · judge later)
@@ -93,8 +93,8 @@ one adapter interface, so adding a model or a whole runtime never touches the sc
 
 Three rules the design follows:
 
-1. **Raw runs are immutable.** Scoring is a separate pass over stored responses, so a scorer bug
-   is a re-score, not a re-run of every model.
+1. **Published observations are immutable.** Scoring is a separate pass, so a scorer bug is a
+   re-score over the same evidence, not a rewrite of model output.
 2. **One seam for inference.** Every runtime is reached through an OpenAI-compatible client;
    moving a model from a laptop to a GPU is a `base_url` change, not a rewrite.
 3. **Same cases everywhere.** A model is never compared against another on differently worded
@@ -119,20 +119,20 @@ while Gemma is rejected by Ollama outright (`does not support tools`, HTTP 400).
 | Tool-calling specialist | a function-calling fine-tune (Hermes / Granite / Command-R class) | to verify per tag | Does specialisation beat general capability on `tool-calling`? |
 | GPU tier | `Qwen2.5-7B-Instruct-AWQ` on vLLM | expected ✅ | Same weights class, server economics — batching and concurrency |
 
-Embeddings for `rag-grounding`: `nomic-embed-text` (768-dim, English) and `bge-m3` (multilingual,
-used for the Russian half) — embedder choice is itself a variable in that suite.
+The reviewed `rag-grounding` run uses `nomic-embed-text` for both languages. Swapping to a
+multilingual embedder such as `bge-m3` is a planned experiment, not a published result.
 
 ## Data
 
 | Corpus | Used by | Licence / provenance | Where it lives |
 |--------|---------|----------------------|----------------|
 | Synthetic microservice incident domain (services, dependencies, tickets), with every case written in both English and Russian | `tool-calling` ✅, `schema-adherence` 🚧 | Written for this repo, MIT | In-repo: [`suites/tool_calling/cases.yaml`](suites/tool_calling/cases.yaml) |
-| Documentation corpus (vLLM / LangGraph / RAGAS public docs) | `rag-grounding` 🚧 | Upstream licences — to be **fetched by a script, never vendored here** | `data/docs/` (git-ignored) |
-| Your own documents | `rag-grounding` 🚧 | Yours | `data/local/` (git-ignored by design) |
+| Documentation corpus (vLLM / LangGraph / RAGAS public docs) | `rag-grounding` ✅ | Upstream licences — **fetched from pinned commits, never vendored here**; historical file hashes are recorded in `runs/evidence.yaml` | `data/docs/` (git-ignored) |
+| Your own documents | local experiments only | Yours; never publish without an explicit data review | `data/local/` (git-ignored by design) |
 
-When `rag-grounding` lands, its golden set will sit next to the suite as YAML — question,
-expected sources, expected facts, and a block of deliberately **unanswerable** questions,
-because "I don't know" is a scored behaviour, not a missing answer.
+The RAG golden set sits next to the suite as YAML: question, expected source, expected facts,
+and deliberately **unanswerable** questions, because "I don't know" is a scored behavior, not
+a missing answer.
 
 ## Reproduce
 
@@ -142,7 +142,7 @@ Prerequisites: [Ollama](https://ollama.com), Python ≥ 3.11, [uv](https://docs.
 ollama pull qwen2.5:7b && ollama pull llama3.2:3b   # baseline + reference
 # optional heavyweight from the Results table (19 GB): ollama pull qwen3-vl:30b
 git clone https://github.com/aleksandryessin/llm-dojo && cd llm-dojo
-uv sync                                             # exact versions come from uv.lock
+uv sync --frozen                                    # exact versions come from uv.lock
 ```
 
 Run a pattern (works today):
@@ -150,7 +150,7 @@ Run a pattern (works today):
 ```bash
 uv run patterns/01-react-agent-langgraph/agent.py
 uv run patterns/02-schema-guided-reasoning/sgr.py
-uv run patterns/03-llm-serving-bench/bench.py qwen2.5:7b
+uv run patterns/03-llm-serving-bench/bench.py --model qwen2.5:7b
 ```
 
 Run the benchmark:
@@ -162,13 +162,14 @@ uv run -m harness.score                                                       # 
 
 The runtime is a flag, not a rewrite: the same suite can be pointed at LM Studio
 (`--runtime lmstudio`, port 1234) or at a rented GPU box (`--runtime vllm`, `VLLM_BASE_URL=…`).
-Both adapters exist; neither has been exercised yet — those rows in the Cost table are empty
-for that reason, not by oversight.
+Both adapters exist. vLLM has reviewed serving evidence below; LM Studio has not been exercised.
 
 ## Results
 
-Measured on an Apple M4 Max (36 GB unified memory) unless stated otherwise; every number is
-reproducible with the commands above. Tables are filled in as suites land.
+Measured on an Apple M4 Max (36 GB unified memory) unless stated otherwise. The reviewed JSONL
+observations, environment notes, and SHA-256 values are committed under [`runs/`](runs/); CI
+regenerates capability reports from them. A rerun requires the named models and hardware and may
+vary with runtime/model versions, so these are archived measurements rather than a leaderboard.
 
 **Capability** — score per suite, 0–1, shown as EN / RU / delta:
 
@@ -177,7 +178,7 @@ reproducible with the commands above. Tables are filled in as suites land.
 | `llama3.2:3b` | 0.83 / 0.83 | 0.00 | 0.67 / 0.33 | **−0.33** | – |
 | `qwen2.5:7b` | 1.00 / 1.00 | 0.00 | 0.78 / 0.11 | **−0.67** | – |
 | `qwen3-vl:30b` | 1.00 / 1.00 | 0.00 | 0.89 / 0.56 | **−0.33** | – |
-| `gemma3:1b` | ✗ no tools in Ollama | n/a | 0.89 / 0.00 | **−0.89** | – |
+| `gemma3:1b` | ✗ no tools in Ollama | n/a | 0.33 / 0.00 | **−0.33** | – |
 | _challenger (8–14B, tbd)_ | – | – | – | – | – |
 
 Full per-case breakdowns: [reports/tool-calling.md](reports/tool-calling.md),
@@ -215,11 +216,13 @@ Full write-up, flags and incident log: [patterns/05-serving-vllm/](patterns/05-s
   laptop — `llama-server` reported 14336 MiB. Predicted ~15 GiB and ~30 sequences on a 24 GB
   card — vLLM reported 14.79 GiB, i.e. 34 sequences.
 
-- **The EN→RU delta is real, large, and invisible on easy tasks.** On `tool-calling` every model
-  scored identically in both languages (Δ 0.00). On `rag-grounding` — same corpus, same
-  retrieval, only the question language changes — every model degraded: −0.33 to −0.89.
-  The poster child is `gemma3:1b`: **best-in-class in English (0.89) and zero in Russian
-  (0.00)**. An English leaderboard score genuinely says nothing about a Russian deployment.
+- **The EN→RU delta is real and invisible on easy tasks.** On `tool-calling` every supported
+  model scored identically in both languages (Δ 0.00). On `rag-grounding` — same corpus and
+  retrieval, only the question language changes — every model degraded. `qwen2.5:7b` fell from
+  0.78 to 0.11. An English-only score would hide that deployment risk.
+- **Citation checks change the conclusion.** `gemma3:1b` initially appeared to score 0.89 in
+  English because the scorer recorded citations but did not require them. Enforcing the stated
+  contract drops it to 0.33. The observations stayed immutable; only their interpretation changed.
 - **The drift you cannot see in aggregates:** `qwen2.5:7b` answered two questions in
   *Chinese* (an English question about Ragas, a Russian one about France). The RU language
   check caught it; the EN check did not — it only detects Cyrillic, and Chinese sails through.
@@ -258,9 +261,11 @@ suites/<suite>/tools.py       tool schemas offered to the model, per suite
 harness/run.py                the model × case matrix runner
 harness/adapters.py           runtime registry: ollama | lmstudio | vllm
 harness/score.py              deterministic scorer + markdown report writer
-runs/                         raw responses, JSONL — git-ignored (large, regenerable)
+runs/                         ad-hoc JSONL ignored; small reviewed evidence allow-listed
 reports/                      generated comparison tables — committed, they are the product
 data/                         corpora, fetched or local — git-ignored
+tests/                        offline scorer and suite-contract tests
+scripts/check_public_repo.py  secret/binary/size/evidence/link publication gate
 ```
 
 ## License

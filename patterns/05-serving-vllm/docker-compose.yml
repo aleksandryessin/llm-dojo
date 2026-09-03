@@ -1,5 +1,6 @@
-# Production contour on one machine: graph store + cache + app, with inference on the host
-# and tracing behind a profile.
+# Local integration contour on one machine: graph store + cache + app, with inference on the
+# host and tracing behind a profile. The app's semantic-cache behavior is an explicit TODO;
+# this file validates wiring and health semantics, not production readiness.
 #
 # Success criterion: `docker compose down -v && docker compose up -d` brings everything up
 # with zero manual steps. Anything that needs a human is a bug in this file.

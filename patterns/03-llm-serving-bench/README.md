@@ -21,7 +21,7 @@ Ollama, vLLM, LM Studio or a cloud provider — only `base_url` changes.
 ## Run
 
 ```bash
-uv run patterns/03-llm-serving-bench/bench.py qwen2.5:7b
+uv run patterns/03-llm-serving-bench/bench.py --model qwen2.5:7b
 ```
 
 ## Exercise

@@ -19,6 +19,11 @@ uv run patterns/04-rag-citations/rag.py "How does vLLM achieve high throughput?"
 uv run patterns/04-rag-citations/rag.py "What is the capital of France?"   # watch it refuse
 ```
 
+The default source URLs are pinned to upstream commits and the fetcher writes
+`data/docs/_provenance.json` with URL, byte count, and SHA-256 for each file. It exits non-zero
+without replacing the corpus if any download fails. The optional `--large` discovery corpus is
+not evidence-grade and still follows live documentation endpoints.
+
 ## What the first three runs showed (verbatim findings)
 
 1. **Answerable EN question** → correct answer, PagedAttention + continuous batching, cited [1].

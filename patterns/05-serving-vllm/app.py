@@ -3,9 +3,9 @@
 What is finished: wiring and `/health`. Every dependency is reached the same way the rest of
 this repo reaches a runtime — by URL from the environment, never by hardcoded host.
 
-What is left for you (marked TODO): the semantic cache itself. Its Redis idioms are lifted
-from ay_gpt_bot/app/utils/redis.py — one pooled client behind lru_cache, decode_responses on,
-every key written with an explicit TTL. Deviate from that only on purpose.
+What is left for you (marked TODO): the semantic cache itself. The skeleton keeps one pooled
+Redis client behind lru_cache, enables decode_responses, and requires an explicit TTL for
+every key. Deviate from those invariants only on purpose.
 
     GET  /health   -> per-dependency status, 200 only if all are up
     POST /ask      -> {"question": "..."} -> answer, served from cache when close enough
@@ -90,7 +90,7 @@ def exact_cache_key(question: str) -> str:
 #    live? A Redis LIST scanned linearly is honest at 100 entries and a disaster at 100k.
 #
 # 2. cache_store(question, answer) -> None
-#    Every key gets an explicit TTL (CACHE_TTL_S) — see ay_gpt_bot. A cache entry without
+#    Every key gets an explicit TTL (CACHE_TTL_S). A cache entry without
 #    an expiry is a correctness bug waiting for the underlying data to change.
 #
 # 3. The threshold itself. 0.95 is a guess. A wrong hit is worse than a miss: the user gets

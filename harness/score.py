@@ -1,17 +1,17 @@
-"""Scorer + reporter for the `tool-calling` suite.
+"""Deterministic scorer + reporter for harness suite runs.
 
-Deterministic only — no LLM judge here. A case passes when the model called exactly the
-expected set of tools AND every checked argument matches. For `no_tool` cases, calling any
-tool is the failure.
+For tool calling, a case passes when the model called exactly the expected tool multiset and
+every checked argument matches. For RAG, grounded facts, citation presence, refusal protocol,
+and language adherence are checked without an LLM judge.
 
 Usage:
-    uv run -m harness.score                      # scores the newest run file
+    uv run -m harness.score                      # scores the newest suite run
     uv run -m harness.score --runs 2026...jsonl  # or a specific one
 """
 import argparse
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import yaml
@@ -44,9 +44,56 @@ def check_args(expected: dict, actual: dict) -> tuple[bool, str]:
 REFUSAL = "NOT_IN_CORPUS"
 
 
+def read_records(path: Path) -> list[dict]:
+    """Read one non-empty JSONL run and fail with a useful CLI error."""
+    try:
+        records = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except FileNotFoundError as exc:
+        raise SystemExit(f"run file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid JSONL in {path}: {exc}") from exc
+    if not records:
+        raise SystemExit(f"run file is empty: {path}")
+    return records
+
+
+def latest_suite_run(runs_dir: Path = RUNS) -> Path:
+    """Return the newest harness suite run, ignoring speed-benchmark JSONL files."""
+    candidates = []
+    for path in runs_dir.glob("*.jsonl"):
+        try:
+            first = next(
+                line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+            )
+            record = json.loads(first)
+        except (OSError, StopIteration, json.JSONDecodeError):
+            continue
+        if record.get("suite"):
+            candidates.append(path)
+    if not candidates:
+        raise SystemExit(f"no suite runs found in {runs_dir}")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def resolve_run_path(value: str | None) -> Path:
+    """Resolve a CLI path; bare names remain relative to the conventional runs/ folder."""
+    if value is None:
+        return latest_suite_run()
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return ROOT / path if len(path.parts) > 1 else RUNS / path
+
+
 def cyrillic_ratio(text: str) -> float:
     letters = [c for c in text if c.isalpha()]
-    return sum("а" <= c.lower() <= "я" or c.lower() == "ё" for c in letters) / len(letters) if letters else 0.0
+    if not letters:
+        return 0.0
+    return sum("а" <= c.lower() <= "я" or c.lower() == "ё" for c in letters) / len(letters)
 
 
 def language_ok(lang: str, answer: str) -> bool:
@@ -59,27 +106,47 @@ def score_rag_record(rec: dict, case: dict) -> dict:
     if rec.get("error"):
         return {**rec, "passed": False, "reason": rec["error"]}
     answer = rec["answer"]
-    refused = REFUSAL in answer
+    refused = answer.lstrip().startswith(REFUSAL)
     lang_ok = language_ok(case["lang"], answer)
     expect = case.get("expect") or {}
 
     if case["type"] == "unanswerable":
         passed = refused and lang_ok
         reason = "" if passed else ("answered instead of refusing" if not refused else "wrong language")
-        return {**rec, "passed": passed, "reason": reason,
-                "refused": refused, "lang_ok": lang_ok, "retrieval_hit": None}
+        return {
+            **rec,
+            "passed": passed,
+            "reason": reason,
+            "refused": refused,
+            "lang_ok": lang_ok,
+            "retrieval_hit": None,
+        }
 
     # answerable
     retrieval_hit = expect["source"] in rec["sources"]
     grounded = any(norm(f) in norm(answer) for f in expect["facts_any"])
     cited = bool(re.search(r"\[\d+\]", answer))
-    passed = grounded and not refused and lang_ok
-    reason = ("" if passed else
-              "refused on an answerable question" if refused else
-              f"missing all expected facts {expect['facts_any']}" if not grounded else
-              "wrong language")
-    return {**rec, "passed": passed, "reason": reason, "refused": refused,
-            "lang_ok": lang_ok, "retrieval_hit": retrieval_hit, "cited": cited}
+    passed = grounded and cited and not refused and lang_ok
+    reason = (
+        ""
+        if passed
+        else "refused on an answerable question"
+        if refused
+        else f"missing all expected facts {expect['facts_any']}"
+        if not grounded
+        else "missing citation"
+        if not cited
+        else "wrong language"
+    )
+    return {
+        **rec,
+        "passed": passed,
+        "reason": reason,
+        "refused": refused,
+        "lang_ok": lang_ok,
+        "retrieval_hit": retrieval_hit,
+        "cited": cited,
+    }
 
 
 def score_record(rec: dict, case: dict) -> dict:
@@ -88,7 +155,7 @@ def score_record(rec: dict, case: dict) -> dict:
         return {**rec, "passed": False, "reason": rec["error"]}
 
     called = [c["name"] for c in rec["tool_calls"]]
-    if set(called) != set(expect["tools"]):
+    if Counter(called) != Counter(expect["tools"]):
         want = expect["tools"] or ["(no tool)"]
         return {**rec, "passed": False, "reason": f"called {called or ['(no tool)']}, expected {want}"}
 
@@ -103,14 +170,27 @@ def score_record(rec: dict, case: dict) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", default=None, help="run file name; default = newest")
+    ap.add_argument(
+        "--runs",
+        default=None,
+        help="run path, or a file name under runs/; default = newest suite run",
+    )
     args = ap.parse_args()
 
-    path = RUNS / args.runs if args.runs else max(RUNS.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
-    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    suite = records[0]["suite"]
-    spec = yaml.safe_load((ROOT / "suites" / suite.replace("-", "_") / "cases.yaml").read_text(encoding="utf-8"))
+    path = resolve_run_path(args.runs)
+    records = read_records(path)
+    suite = records[0].get("suite")
+    if not suite:
+        raise SystemExit(f"not a suite run (missing 'suite' in first record): {path}")
+    suite_path = ROOT / "suites" / suite.replace("-", "_") / "cases.yaml"
+    if not suite_path.is_file():
+        raise SystemExit(f"suite definition not found for {suite!r}: {suite_path}")
+    spec = yaml.safe_load(suite_path.read_text(encoding="utf-8"))
     cases = {c["id"]: c for c in spec["cases"]}
+
+    unknown_cases = sorted({record.get("case_id") for record in records} - cases.keys())
+    if unknown_cases:
+        raise SystemExit(f"run contains cases absent from suite {suite!r}: {unknown_cases}")
 
     scorer = score_rag_record if spec.get("kind") == "rag" else score_record
     scored = [scorer(r, cases[r["case_id"]]) for r in records]
@@ -120,7 +200,11 @@ def main() -> None:
     for s in scored:
         agg[s["model"]][s["lang"]].append(s)
 
-    lines = [f"# Report — suite `{suite}`", "", f"Raw runs: `runs/{path.name}`", ""]
+    try:
+        display_path = path.resolve().relative_to(ROOT)
+    except ValueError:
+        display_path = path
+    lines = [f"# Report — suite `{suite}`", "", f"Raw runs: `{display_path}`", ""]
     lines += ["| Model | EN | RU | Δ EN→RU | mean latency |", "|---|---|---|---|---|"]
     for model, by_lang in agg.items():
         en = by_lang.get("en", [])

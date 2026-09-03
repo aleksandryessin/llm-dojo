@@ -1,18 +1,20 @@
-# 05 — Serving: vLLM on a rented GPU, and the contour around it
+# 05 — Serving: vLLM on a rented GPU, plus an integration skeleton
 
-Two halves of the same question — *how do you actually run this in production?*
+Two halves of the same question — *what must be measured and wired before production?*
 
 1. **Serving** — the same model on a laptop runtime (Ollama/llama.cpp) and on vLLM with a
    real GPU, measured with the same benchmark. Commands, GPU selection and post-mortems:
    [RUNBOOK.md](RUNBOOK.md).
-2. **Contour** — everything else a deployment needs, in one `docker compose up`.
+2. **Integration skeleton** — graph, cache, application, and optional tracing in one
+   `docker compose up`. The semantic cache is intentionally unfinished and marked TODO in
+   `app.py`; this is not presented as a production-ready service.
 
-## The contour
+## The integration contour
 
 ```
    host                                    docker compose
  ┌──────────┐                 ┌──────────────────────────────────────────┐
- │  ollama  │◄────────────────┤  app  :8080   semantic cache → LLM       │
+ │  ollama  │◄────────────────┤  app  :8080   cache TODO → LLM            │
  │  :11434  │  host.docker.   │   │                                      │
  │  (Metal) │  internal       │   ├──► redis  :6379   cache              │
  └──────────┘                 │   └──► neo4j  :7687   graph              │
@@ -134,7 +136,8 @@ docker compose -f patterns/05-serving-vllm/docker-compose.yml stop neo4j && dock
 
 Measured with [`patterns/03-llm-serving-bench/bench.py`](../03-llm-serving-bench/bench.py),
 20 requests × 256 tokens, temperature 0, ~126-token prompt. Laptop rows on an Apple M4 Max
-(36 GB unified memory); GPU rows on a rented 24 GB card.
+(36 GB unified memory); GPU rows on a rented 24 GB card. The reviewed JSONL observations and
+configuration metadata are committed under [`runs/`](../../runs/).
 
 | Runtime | Model | Concurrency | TTFT p50 / p95 | Decode tok/s per request | Aggregate tok/s | Wall |
 |---------|-------|-------------|----------------|--------------------------|-----------------|------|

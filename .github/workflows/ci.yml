@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --frozen
+      - run: uv run python -m compileall -q harness patterns suites tests scripts
+      - run: uv run python -m unittest discover -v
+      - run: uv run python scripts/check_public_repo.py
+      - name: Reports match reviewed evidence
+        run: |
+          uv run python -m harness.score --runs runs/20260729T173918Z-tool-calling.jsonl
+          uv run python -m harness.score --runs runs/20260730T-rag-grounding-all4.jsonl
+          git diff --exit-code -- reports/
+      - name: Compose file is valid
+        if: matrix.python-version == '3.12'
+        env:
+          NEO4J_PASSWORD: ci-only-neo4j
+          POSTGRES_PASSWORD: ci-only-postgres
+          LANGFUSE_NEXTAUTH_SECRET: ci-only-nextauth
+          LANGFUSE_SALT: ci-only-salt
+          LANGFUSE_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          LANGFUSE_PUBLIC_KEY: pk-lf-ci-only
+          LANGFUSE_SECRET_KEY: sk-lf-ci-only
+          LANGFUSE_USER_PASSWORD: ci-only-user
+        run: docker compose --env-file patterns/05-serving-vllm/.env.example -f patterns/05-serving-vllm/docker-compose.yml config --quiet
+      - name: Integration app image builds
+        if: matrix.python-version == '3.12'
+        run: docker build patterns/05-serving-vllm

@@ -1,0 +1,21 @@
+{"type": "summary", "runtime": "ollama", "model": "qwen2.5:7b", "n": 20, "concurrency": 20, "max_tokens": 256, "prompt_tokens_approx": 128, "ok": 20, "failed": 0, "wall_s": 78.239, "ttft_p50": 37.61486445798073, "ttft_p95": 69.75794233300257, "e2e_p50": 41.36011037498247, "e2e_p95": 73.9642217499204, "decode_tps_median": 67.33666118104246, "aggregate_tps": 65.4, "total_out_tokens": 5120, "token_source": "usage"}
+{"type": "request", "ttft": 22.508917249972, "e2e": 26.23710129200481, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 53.29889666696545, "e2e": 57.322903124964796, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 30.10460541700013, "e2e": 33.84675279201474, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 33.85708095901646, "e2e": 37.603741083992645, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 61.426217708038166, "e2e": 65.60520787502173, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 49.33933337498456, "e2e": 53.2797682499513, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 7.611317790928297, "e2e": 11.28611041593831, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 0.2364899170352146, "e2e": 3.9019425420556217, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 15.036114125046879, "e2e": 18.7560540830018, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 18.776129374979064, "e2e": 22.488220707979053, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 41.375861583976075, "e2e": 45.203960124985315, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 11.300070791039616, "e2e": 15.01906991598662, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 26.242819958017208, "e2e": 30.0762180830352, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 37.61486445798073, "e2e": 41.36011037498247, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 73.97164258291014, "e2e": 78.22473891591653, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 57.338205082924105, "e2e": 61.401266582892276, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 45.22525058302563, "e2e": 49.32043591607362, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 3.911664374987595, "e2e": 7.5900254170410335, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 65.6162999579683, "e2e": 69.72884866700042, "out_tokens": 256, "token_source": "usage", "error": null}
+{"type": "request", "ttft": 69.75794233300257, "e2e": 73.9642217499204, "out_tokens": 256, "token_source": "usage", "error": null}
